@@ -1,0 +1,80 @@
+# ---------------------------------------------------------------- global
+seed: 42
+work_dir: /content/work            # everything generated goes here (override with --work)
+
+# ---------------------------------------------------------------- data / rendering
+data:
+  vmax: 100.0                      # sensor max is ~104 -> raw channel = x / vmax
+  grad_norm: 0.65                  # ~99.5th pct of Sobel magnitude on the upsampled map
+  scale: 4                         # 64x27 grid -> 256x108 px (aspect-correct)
+  canvas: 256                      # YOLO sees a 256x256 canvas, map centred (explicit, no hidden letterbox)
+  max_subjects: null               # null = all 60
+
+split:
+  n_folds: 5                       # leave-subjects-out: 12 test subjects per fold
+  n_val_subjects: 6                # per fold, taken out of the training subjects
+
+# ---------------------------------------------------------------- stage 1: YOLO
+yolo:
+  model: yolo11n.pt                # or yolov8n.pt
+  epochs: 40
+  batch: 64
+  patience: 15
+  workers: 2
+  frame_stride: 2                  # use every 2nd of the 10 annotated snapshots
+  det_conf: 0.05                   # low conf threshold when building tokens (keep weak evidence)
+  det_iou: 0.5
+  extract_batch: 256
+
+# ---------------------------------------------------------------- stage 2: sequence model
+seq:
+  window: 10                       # frames per window
+  stride: 5                        # window stride on the real 30-frame sequences
+  synth_per_pair: 4                # synthetic transition clips per (subject, from-pose, to-pose)
+  pre_len: [2, 4]                  # frames of old posture before the transition
+  trans_len: [2, 4]                # cross-fade frames
+tokens:
+  groups: [boxes, feat, stats]     # subset of: boxes, feat, stats
+  pca_dim: 32
+transformer:
+  d_model: 64
+  n_heads: 4
+  n_layers: 2
+  d_ff: 128
+  dropout: 0.2
+  epochs: 40
+  batch: 128
+  lr: 0.001
+  weight_decay: 0.01
+  patience: 10
+  noise_std: 0.05                  # gaussian noise on standardised tokens (train only)
+  frame_drop: 0.1                  # prob. of zeroing a whole frame token (train only)
+  trans_weight: 1.0
+  ensemble: 5                      # deep-ensemble size
+  mc_samples: 30                   # MC-dropout forward passes
+eval:
+  ece_bins: 15
+  ablations: true
+
+# ---------------------------------------------------------------- stretch: toy RL
+rl:
+  zone_edges: [0, 16, 32, 48, 64]  # rows -> head/shoulders, torso/lumbar, hips/thighs, legs/heels
+  n_levels: 5                      # firmness level per zone 0 (soft) .. 4 (firm)
+  horizon: 6
+  episodes: 30000
+  alpha: 0.2
+  gamma: 0.9
+  eps_start: 1.0
+  eps_end: 0.05
+  mask_posture_p: 0.15             # train-time prob. of hiding posture info from the policy
+  uncertainty_quantile: 0.8        # gate: hide posture when predictive entropy above val-quantile
+
+# ---------------------------------------------------------------- quick smoke test (--debug)
+debug:
+  max_subjects: 12
+  n_folds: 2
+  n_val_subjects: 2
+  yolo: {epochs: 2, frame_stride: 5}
+  seq: {synth_per_pair: 1}
+  transformer: {epochs: 3, ensemble: 2, mc_samples: 5}
+  rl: {episodes: 2000}
